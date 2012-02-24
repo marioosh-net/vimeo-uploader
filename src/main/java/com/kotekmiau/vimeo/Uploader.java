@@ -73,7 +73,7 @@ public class Uploader {
 	private Token accessToken;	
 
 	@SuppressWarnings("serial")
-	public Uploader() throws IOException {
+	public Uploader() throws IOException, APIException {
 
 		/**
 		 * read .vimeo-uploader
@@ -99,12 +99,17 @@ public class Uploader {
 			in1.close();
 		}
 
-		service = new ServiceBuilder()
-			.provider(VimeoApi.class)
-			.apiKey(properties
-			.getProperty("apiKey"))
-			.apiSecret(properties.getProperty("secret"))
-			.build();
+		try {
+			service = new ServiceBuilder()
+				.provider(VimeoApi.class)
+				.apiKey(properties
+				.getProperty("apiKey"))
+				.apiSecret(properties.getProperty("secret"))
+				.build();
+		} catch (Exception e) {
+			System.out.println(e.getMessage()+"\nCheck Your configuration file ("+CONFIG_FILE+")");
+			return;
+		}		
 
 		/**
 		 * try read saved token
@@ -143,15 +148,15 @@ public class Uploader {
 		}
 
 		// get logged username
-		Response response = call("vimeo.test.login", null);
+		ResponseWrapper response = call("vimeo.test.login", null);
 		String username = (
-				((Node) path(response.getBody(), "//username", XPathConstants.NODE))
+				((Node) path(response.getResponse().getBody(), "//username", XPathConstants.NODE))
 				.getTextContent());
 		System.out.printf("%-30S: %s\n", "Logged", username);
 		
 		// get free storage space in bytes		
 		response = call("vimeo.videos.upload.getQuota", null);
-		String free = ((Node) path(response.getBody(), "//upload_space", XPathConstants.NODE))
+		String free = ((Node) path(response.getResponse().getBody(), "//upload_space", XPathConstants.NODE))
 				.getAttributes()
 				.getNamedItem("free")
 				.getNodeValue();
@@ -167,7 +172,7 @@ public class Uploader {
 				   put("upload_method", "streaming");
 				}}
 			);
-			NamedNodeMap nodeMap = ((Node) path(response.getBody(), "//ticket", XPathConstants.NODE)).getAttributes();
+			NamedNodeMap nodeMap = ((Node) path(response.getResponse().getBody(), "//ticket", XPathConstants.NODE)).getAttributes();
 			final String ticketId = nodeMap.getNamedItem("id").getNodeValue();
 			String endpoint = nodeMap.getNamedItem("endpoint").getNodeValue();
 			System.out.printf("%-30S: %s\n", "Ticket ID", ticketId);
@@ -180,7 +185,7 @@ public class Uploader {
 						   put("ticket_id", ticketId);
 						}}
 					);
-			NamedNodeMap nodeMap1 = ((Node) path(response.getBody(), "//ticket", XPathConstants.NODE)).getAttributes();
+			NamedNodeMap nodeMap1 = ((Node) path(response.getResponse().getBody(), "//ticket", XPathConstants.NODE)).getAttributes();
 			System.out.printf("%-30S: %s\n", "Ticket VALID", nodeMap1.getNamedItem("valid").getNodeValue());
 			*/
 	
@@ -194,7 +199,7 @@ public class Uploader {
 				   put("ticket_id", ticketId);
 				}}				
 			);
-			NamedNodeMap nodeMap2 = ((Node) path(response.getBody(), "//ticket", XPathConstants.NODE)).getAttributes();
+			NamedNodeMap nodeMap2 = ((Node) path(response.getResponse().getBody(), "//ticket", XPathConstants.NODE)).getAttributes();
 			final String videoId = nodeMap2.getNamedItem("video_id").getNodeValue();
 			System.out.printf("%-30S: %s\n", "Video ID", videoId);
 			
@@ -205,7 +210,7 @@ public class Uploader {
 				   put("title", videoTitle);
 				}}				
 			);
-			NamedNodeMap nodeMap3 = ((Node) path(response.getBody(), "//rsp", XPathConstants.NODE)).getAttributes();
+			NamedNodeMap nodeMap3 = ((Node) path(response.getResponse().getBody(), "//rsp", XPathConstants.NODE)).getAttributes();
 			String stat = nodeMap3.getNamedItem("stat").getNodeValue();
 			System.out.printf("%-30S: %s\n", "set Title status", stat);
 			
@@ -216,7 +221,7 @@ public class Uploader {
 				   put("description", videoDescription);
 				}}				
 			);
-			NamedNodeMap nodeMap4 = ((Node) path(response.getBody(), "//rsp", XPathConstants.NODE)).getAttributes();
+			NamedNodeMap nodeMap4 = ((Node) path(response.getResponse().getBody(), "//rsp", XPathConstants.NODE)).getAttributes();
 			String stat2 = nodeMap4.getNamedItem("stat").getNodeValue();
 			System.out.printf("%-30S: %s\n", "set Description status", stat2);
 			
@@ -230,7 +235,7 @@ public class Uploader {
 	 * @param params
 	 * @return
 	 */
-	private Response call(String method, Map<String, String> params) {
+	private ResponseWrapper call(String method, Map<String, String> params) throws APIException {
 		if(verbose)	System.out.println("Calling method: \""+method+"\"");
 		OAuthRequest orequest = new OAuthRequest(Verb.GET, Uploader.ENDPOINT);
 		orequest.addQuerystringParameter("method", method);
@@ -248,7 +253,15 @@ public class Uploader {
 			System.out.println(nodes.item(i).getTextContent());
 		}
 		*/
-		return response;
+		
+		NamedNodeMap nodeMap3 = ((Node) path(response.getBody(), "//rsp", XPathConstants.NODE)).getAttributes();
+		String stat = nodeMap3.getNamedItem("stat").getNodeValue();
+		
+		if(stat.equals("fail")) {
+			throw new APIException(method, response);
+		}
+		
+		return new ResponseWrapper(response, stat);
 	}
 
 	/**
@@ -407,7 +420,12 @@ public class Uploader {
 				videoPath = cmd.getArgs()[0];
 			}
 		
-			new Uploader();
+			try {
+				new Uploader();
+			} catch (APIException e) {
+				System.out.println("\n---- ERROR REPORT ---");
+				System.out.println(e.getMessage());
+			}			
 			
 		} catch (ParseException e) {
 			System.out.println(e.getMessage());
@@ -415,10 +433,34 @@ public class Uploader {
 		
 	}
 	
-	private void verbose(Object o) {
-		if(verbose) {
-			System.out.println(o.toString());
+	class ResponseWrapper {
+		Response response;
+		String status;
+		public ResponseWrapper(Response response, String status) {
+			this.response = response;
+			this.status = status;
 		}
+		public String getStatus() {
+			return status;
+		}
+		public Response getResponse() {
+			return response;
+		}
+	}
+	
+	@SuppressWarnings("serial")
+	class APIException extends Exception {
+		Response response;
+		String method;
+	    public APIException(String method, Response response) {
+	    	this.response = response;
+	    	this.method = method;
+        }		
+	    
+	    @Override
+	    public String getMessage() {
+	    	return method + " FAIL\nRESPONSE BODY:\n"+response.getBody();
+	    }
 	}
 
 }
